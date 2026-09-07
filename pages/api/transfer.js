@@ -1,5 +1,17 @@
 import { supabase } from '@/lib/supabaseClient';
 
+// Video title ko saaf karne ka function
+function cleanYouTubeTitle(rawTitle) {
+  return rawTitle
+    .replace(/\[.*?\]|\(.*?\)/g, '') // Brackets aur unka data hatayein
+    .replace(/official\s+video|official\s+audio|music\s+video|lyric\s+video|lyrics|hd|4k|audio|remix|full\s+song/gi, '')
+    .replace(/ft\..*|feat\..*/gi, '') // feat / ft hata dein
+    .replace(/\|.*$/g, '') // Pipe | ke baad wala sab hata dein
+    .replace(/[-_]/g, ' ') // Dash aur underscore ko space karein
+    .replace(/\s+/g, ' ') // Extra spaces khatam karein
+    .trim();
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'Method not allowed' });
@@ -7,7 +19,7 @@ export default async function handler(req, res) {
 
   const { playlistIds } = req.body;
   if (!playlistIds || !Array.isArray(playlistIds) || playlistIds.length === 0) {
-    return res.status(400).json({ error: 'No playlists selected for transfer.' });
+    return res.status(400).json({ error: 'No playlists selected.' });
   }
 
   const userId = req.cookies?.sync_user_id || 'default_user';
@@ -28,7 +40,7 @@ export default async function handler(req, res) {
     const transferResults = [];
 
     for (const playlistId of playlistIds) {
-      // 1. YouTube Playlist Details
+      // 1. YouTube Playlist Name
       const plDetailRes = await fetch(
         `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}`,
         { headers: { Authorization: `Bearer ${googleToken}` } }
@@ -36,7 +48,7 @@ export default async function handler(req, res) {
       const plDetailData = await plDetailRes.json();
       const playlistName = plDetailData.items?.[0]?.snippet?.title || 'Synced Playlist';
 
-      // 2. Fetch tracks
+      // 2. Fetch all YouTube Tracks
       let songTitles = [];
       let pageToken = '';
       do {
@@ -56,26 +68,36 @@ export default async function handler(req, res) {
         pageToken = itemsData.nextPageToken || '';
       } while (pageToken);
 
-      // 3. Match Tracks on Spotify
+      // 3. Search Spotify with Fallback logic
       const spotifyTrackUris = [];
       for (const rawTitle of songTitles) {
-        const cleaned = rawTitle
-          .replace(/\[.*?\]|\(.*?\)/g, '')
-          .replace(/official\s+video|official\s+audio|lyrics|hd|4k/gi, '')
-          .trim();
-
-        const searchRes = await fetch(
+        const cleaned = cleanYouTubeTitle(rawTitle);
+        
+        // Pehle cleaned title se dhoondein
+        let searchRes = await fetch(
           `https://api.spotify.com/v1/search?q=${encodeURIComponent(cleaned)}&type=track&limit=1`,
           { headers: { Authorization: `Bearer ${spotifyToken}` } }
         );
-        const searchData = await searchRes.json();
-        const foundTrack = searchData.tracks?.items?.[0];
+        let searchData = await searchRes.json();
+        let foundTrack = searchData.tracks?.items?.[0];
+
+        // Agar clean title se na miley to shuru ke 3-4 lafz se dhoondein
+        if (!foundTrack && cleaned.length > 0) {
+          const shortQuery = cleaned.split(' ').slice(0, 4).join(' ');
+          searchRes = await fetch(
+            `https://api.spotify.com/v1/search?q=${encodeURIComponent(shortQuery)}&type=track&limit=1`,
+            { headers: { Authorization: `Bearer ${spotifyToken}` } }
+          );
+          searchData = await searchRes.json();
+          foundTrack = searchData.tracks?.items?.[0];
+        }
+
         if (foundTrack?.uri) {
           spotifyTrackUris.push(foundTrack.uri);
         }
       }
 
-      // 4. Create Playlist using direct /v1/me/playlists endpoint
+      // 4. Create Playlist on Spotify
       const createPlRes = await fetch('https://api.spotify.com/v1/me/playlists', {
         method: 'POST',
         headers: {
@@ -84,21 +106,21 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           name: playlistName,
-          description: 'Synced from YouTube',
+          description: 'Synced from YouTube via Sync App',
           public: false,
         }),
       });
       const newPlaylist = await createPlRes.json();
 
       if (!createPlRes.ok) {
-        throw new Error(`Spotify error: ${newPlaylist.error?.message || 'Forbidden'}`);
+        throw new Error(`Spotify Playlist Error: ${newPlaylist.error?.message || 'Failed to create'}`);
       }
 
-      // 5. Add Tracks
+      // 5. Add Tracks to the created Spotify playlist
       if (newPlaylist.id && spotifyTrackUris.length > 0) {
         for (let i = 0; i < spotifyTrackUris.length; i += 100) {
           const batch = spotifyTrackUris.slice(i, i + 100);
-          await fetch(`https://api.spotify.com/v1/playlists/${newPlaylist.id}/tracks`, {
+          const addRes = await fetch(`https://api.spotify.com/v1/playlists/${newPlaylist.id}/tracks`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${spotifyToken}`,
@@ -106,6 +128,11 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({ uris: batch }),
           });
+
+          if (!addRes.ok) {
+            const addErr = await addRes.json();
+            console.error('Track add error:', addErr);
+          }
         }
       }
 
@@ -113,7 +140,7 @@ export default async function handler(req, res) {
         playlistName,
         totalSongs: songTitles.length,
         syncedToSpotify: spotifyTrackUris.length,
-        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify,
+        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify || null,
       });
     }
 
