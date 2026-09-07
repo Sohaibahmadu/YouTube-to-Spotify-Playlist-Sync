@@ -11,7 +11,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Supabase se dono tokens nikalna
     const { data: tokens, error } = await supabase
       .from('user_tokens')
       .select('*')
@@ -28,19 +27,27 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing access tokens.' });
     }
 
-    // YouTube ki playlists fetch karein
-    const ytRes = await fetch(
-      'https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=25',
-      {
+    let allPlaylists = [];
+    let nextPageToken = '';
+
+    // Loop taake 25 ya 50 se zyada hon to tamam pages load hon
+    do {
+      const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const ytRes = await fetch(url, {
         headers: { Authorization: `Bearer ${googleToken}` },
+      });
+      const ytData = await ytRes.json();
+
+      if (ytData.items) {
+        allPlaylists = allPlaylists.concat(ytData.items);
       }
-    );
-    const ytData = await ytRes.json();
+      nextPageToken = ytData.nextPageToken || '';
+    } while (nextPageToken);
 
     return res.status(200).json({
-      message: 'Tokens verified successfully!',
-      youtubePlaylistsCount: ytData.items ? ytData.items.length : 0,
-      playlists: ytData.items || [],
+      message: 'Playlists loaded successfully!',
+      totalCount: allPlaylists.length,
+      playlists: allPlaylists,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
