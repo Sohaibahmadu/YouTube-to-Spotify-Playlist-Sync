@@ -6,9 +6,11 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
   const { spotify_connected, google_connected } = router.query;
 
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [playlists, setPlaylists] = useState([]);
   const [selectedPlaylists, setSelectedPlaylists] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
+  const [transferReport, setTransferReport] = useState([]);
 
   const spotifyActive = Boolean(spotify_connected || isSpotifyConnected);
   const googleActive = Boolean(google_connected || isGoogleConnected);
@@ -17,13 +19,14 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
   const fetchPlaylists = async () => {
     setLoading(true);
     setErrorMsg('');
+    setTransferReport([]);
     try {
       const res = await fetch('/api/sync', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to fetch playlists');
       
       setPlaylists(data.playlists || []);
-      setSelectedPlaylists([]); // Reset selection on fresh load
+      setSelectedPlaylists([]);
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -44,6 +47,30 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
       setSelectedPlaylists([]);
     } else {
       setSelectedPlaylists(playlists.map((pl) => pl.id));
+    }
+  };
+
+  const handleTransfer = async () => {
+    if (selectedPlaylists.length === 0) return;
+
+    setSyncing(true);
+    setErrorMsg('');
+    setTransferReport([]);
+
+    try {
+      const res = await fetch('/api/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playlistIds: selectedPlaylists }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Transfer failed');
+
+      setTransferReport(data.results || []);
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -85,12 +112,12 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
         </a>
       </div>
 
-      {/* Fetch Button */}
+      {/* Load Playlists Button */}
       {bothConnected && (
         <div style={{ textAlign: 'center', marginTop: '25px' }}>
           <button
             onClick={fetchPlaylists}
-            disabled={loading}
+            disabled={loading || syncing}
             style={{
               padding: '12px 24px',
               backgroundColor: '#2563eb',
@@ -98,7 +125,8 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
               border: 'none',
               borderRadius: '6px',
               fontWeight: 'bold',
-              cursor: loading ? 'not-allowed' : 'pointer'
+              cursor: loading || syncing ? 'not-allowed' : 'pointer',
+              opacity: loading || syncing ? 0.7 : 1
             }}
           >
             {loading ? 'Loading Playlists...' : 'Load YouTube Playlists'}
@@ -112,19 +140,39 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
         </p>
       )}
 
-      {/* Playlists Display */}
+      {/* Transfer Success Report */}
+      {transferReport.length > 0 && (
+        <div style={{ marginTop: '25px', padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px' }}>
+          <h3 style={{ margin: '0 0 10px 0', color: '#16a34a' }}>Sync Complete!</h3>
+          <ul style={{ margin: 0, paddingLeft: '20px' }}>
+            {transferReport.map((item, idx) => (
+              <li key={idx} style={{ margin: '6px 0' }}>
+                <strong>{item.playlistName}</strong>: {item.syncedToSpotify}/{item.totalSongs} tracks synced.{' '}
+                {item.spotifyPlaylistUrl && (
+                  <a href={item.spotifyPlaylistUrl} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 'bold' }}>
+                    Open in Spotify
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Playlists Selection List */}
       {playlists.length > 0 && (
         <div style={{ marginTop: '30px', borderTop: '1px solid #e5e7eb', paddingTop: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
             <h3 style={{ margin: 0 }}>Playlists Found ({playlists.length})</h3>
             <button
               onClick={handleSelectAll}
+              disabled={syncing}
               style={{
                 padding: '6px 12px',
                 border: '1px solid #9ca3af',
                 backgroundColor: '#fff',
                 borderRadius: '4px',
-                cursor: 'pointer',
+                cursor: syncing ? 'not-allowed' : 'pointer',
                 fontSize: '13px'
               }}
             >
@@ -143,14 +191,15 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
                   backgroundColor: selectedPlaylists.includes(pl.id) ? '#f0fdf4' : '#f9fafb',
                   border: selectedPlaylists.includes(pl.id) ? '1px solid #86efac' : '1px solid #e5e7eb',
                   borderRadius: '6px',
-                  cursor: 'pointer'
+                  cursor: syncing ? 'not-allowed' : 'pointer'
                 }}
               >
                 <input
                   type="checkbox"
                   checked={selectedPlaylists.includes(pl.id)}
                   onChange={() => handleCheckboxChange(pl.id)}
-                  style={{ width: '18px', height: '18px', marginRight: '12px', cursor: 'pointer' }}
+                  disabled={syncing}
+                  style={{ width: '18px', height: '18px', marginRight: '12px', cursor: syncing ? 'not-allowed' : 'pointer' }}
                 />
                 <span style={{ minWidth: '35px', fontWeight: 'bold', color: '#6b7280' }}>
                   #{index + 1}
@@ -167,19 +216,22 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
 
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
             <button
-              disabled={selectedPlaylists.length === 0}
+              onClick={handleTransfer}
+              disabled={selectedPlaylists.length === 0 || syncing}
               style={{
                 padding: '12px 28px',
-                backgroundColor: selectedPlaylists.length > 0 ? '#16a34a' : '#9ca3af',
+                backgroundColor: selectedPlaylists.length > 0 && !syncing ? '#16a34a' : '#9ca3af',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '6px',
                 fontWeight: 'bold',
-                cursor: selectedPlaylists.length > 0 ? 'pointer' : 'not-allowed',
+                cursor: selectedPlaylists.length > 0 && !syncing ? 'pointer' : 'not-allowed',
                 fontSize: '15px'
               }}
             >
-              Sync Selected ({selectedPlaylists.length}) Playlists to Spotify
+              {syncing
+                ? 'Syncing in Progress (please wait)...'
+                : `Sync Selected (${selectedPlaylists.length}) Playlists to Spotify`}
             </button>
           </div>
         </div>
