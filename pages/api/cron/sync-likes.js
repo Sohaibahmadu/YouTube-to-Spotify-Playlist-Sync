@@ -11,7 +11,6 @@ function cleanTrackTitle(title) {
     .trim();
 }
 
-// Spotify Access Token Refresh Function
 async function refreshSpotifyToken(refreshToken, userId) {
   const client_id = process.env.SPOTIFY_CLIENT_ID;
   const client_secret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -53,7 +52,6 @@ export default async function handler(req, res) {
     let googleToken = googleRecord?.access_token;
     let spotifyToken = spotifyRecord?.access_token;
 
-    // Spotify token refresh check
     if (spotifyRecord?.refresh_token) {
       const refreshed = await refreshSpotifyToken(spotifyRecord.refresh_token, spotifyRecord.user_id);
       if (refreshed) spotifyToken = refreshed;
@@ -89,20 +87,17 @@ export default async function handler(req, res) {
       if (track?.id) {
         trackIdsToSave.push(track.id);
         debugList.push({ youtube: rawTitle, spotifyFound: track.name, id: track.id });
-      } else {
-        debugList.push({ youtube: rawTitle, spotifyFound: 'NOT_FOUND' });
       }
     }
 
-    // Spotify par Liked Songs mein add karna
+    // Spotify Liked Songs Save (Query parameter URL ke zariye)
     if (trackIdsToSave.length > 0) {
-      const addRes = await fetch('https://api.spotify.com/v1/me/tracks', {
+      const addRes = await fetch(`https://api.spotify.com/v1/me/tracks?ids=${trackIdsToSave.join(',')}`, {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${spotifyToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ ids: trackIdsToSave }),
       });
       
       if (!addRes.ok) {
