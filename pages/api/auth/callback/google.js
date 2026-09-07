@@ -1,7 +1,5 @@
 import { supabase } from '@/lib/supabaseClient';
 
-
-
 export default async function handler(req, res) {
   const { code } = req.query;
 
@@ -32,7 +30,6 @@ export default async function handler(req, res) {
       return res.status(400).json(tokenData);
     }
 
-    // YouTube Channel ID nikalna uniquely identify karne ke liye
     const channelResponse = await fetch(
       'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
       {
@@ -40,12 +37,16 @@ export default async function handler(req, res) {
       }
     );
     const channelData = await channelResponse.json();
-    const userId = channelData.items?.[0]?.id || 'google_user';
+    const googleUserId = channelData.items?.[0]?.id || 'google_user';
+
+    // Agar Spotify pehle se connect hai to wahi cookie wali user ID use hogi
+    const existingUserId = req.cookies?.sync_user_id;
+    const finalUserId = existingUserId || googleUserId;
 
     const { error: dbError } = await supabase
       .from('user_tokens')
       .upsert({
-        user_id: userId,
+        user_id: finalUserId,
         provider: 'google',
         access_token: tokenData.access_token,
         refresh_token: tokenData.refresh_token || null,
@@ -56,9 +57,14 @@ export default async function handler(req, res) {
       console.error('Supabase save error:', dbError);
     }
 
-    res.redirect('/?google_connected=true');
+    // Dono accounts ko link rakhne ke liye cookies set karein
+    res.setHeader('Set-Cookie', [
+      `sync_user_id=${finalUserId}; Path=/; Max-Age=2592000; SameSite=Lax`,
+      `google_connected=true; Path=/; Max-Age=2592000; SameSite=Lax`
+    ]);
+
+    res.redirect('/');
   } catch (err) {
     res.status(500).send(err.message);
   }
 }
-
