@@ -2,10 +2,7 @@ export default function handler(req, res) {
   const client_id = process.env.SPOTIFY_CLIENT_ID;
   const redirect_uri = process.env.SPOTIFY_REDIRECT_URI;
 
-  if (!client_id || !redirect_uri) {
-    return res.status(500).send("Spotify Environment Variables missing. Check SPOTIFY_CLIENT_ID and SPOTIFY_REDIRECT_URI in Vercel.");
-  }
-
+  // Liked songs save karne ke liye 'user-library-modify' scope ka hona lazmi hai
   const scopes = [
     'playlist-read-private',
     'playlist-modify-public',
