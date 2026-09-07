@@ -1,14 +1,17 @@
 import { supabase } from '@/lib/supabaseClient';
 
-// Video title ko saaf karne ka function
-function cleanYouTubeTitle(rawTitle) {
-  return rawTitle
-    .replace(/\[.*?\]|\(.*?\)/g, '') // Brackets aur unka data hatayein
-    .replace(/official\s+video|official\s+audio|music\s+video|lyric\s+video|lyrics|hd|4k|audio|remix|full\s+song/gi, '')
-    .replace(/ft\..*|feat\..*/gi, '') // feat / ft hata dein
-    .replace(/\|.*$/g, '') // Pipe | ke baad wala sab hata dein
-    .replace(/[-_]/g, ' ') // Dash aur underscore ko space karein
-    .replace(/\s+/g, ' ') // Extra spaces khatam karein
+function cleanTrackTitle(title) {
+  if (!title) return '';
+  return title
+    // Brackets aur parentheses ka text hatayein
+    .replace(/\(.*?\)|\[.*?\]/g, '')
+    // Tags hatayein
+    .replace(/official\s+video|official\s+audio|music\s+video|lyric\s+video|lyrics|hd|4k|audio|remix|full\s+song|video|song/gi, '')
+    // Feat / ft. hatayein
+    .replace(/feat\..*|ft\..*/gi, '')
+    // Extra punctuation hatayein
+    .replace(/[|&/:_~#@!]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -40,7 +43,7 @@ export default async function handler(req, res) {
     const transferResults = [];
 
     for (const playlistId of playlistIds) {
-      // 1. YouTube Playlist Name
+      // 1. YouTube playlist title
       const plDetailRes = await fetch(
         `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}`,
         { headers: { Authorization: `Bearer ${googleToken}` } }
@@ -48,7 +51,7 @@ export default async function handler(req, res) {
       const plDetailData = await plDetailRes.json();
       const playlistName = plDetailData.items?.[0]?.snippet?.title || 'Synced Playlist';
 
-      // 2. Fetch all YouTube Tracks
+      // 2. Fetch YouTube Videos
       let songTitles = [];
       let pageToken = '';
       do {
@@ -68,32 +71,40 @@ export default async function handler(req, res) {
         pageToken = itemsData.nextPageToken || '';
       } while (pageToken);
 
-      // 3. Search Spotify with Fallback logic
+      // 3. Robust Spotify Search (Smart Match)
       const spotifyTrackUris = [];
       for (const rawTitle of songTitles) {
-        const cleaned = cleanYouTubeTitle(rawTitle);
-        
-        // Pehle cleaned title se dhoondein
-        let searchRes = await fetch(
-          `https://api.spotify.com/v1/search?q=${encodeURIComponent(cleaned)}&type=track&limit=1`,
-          { headers: { Authorization: `Bearer ${spotifyToken}` } }
-        );
-        let searchData = await searchRes.json();
-        let foundTrack = searchData.tracks?.items?.[0];
+        const cleaned = cleanTrackTitle(rawTitle);
+        const queriesToTry = [];
 
-        // Agar clean title se na miley to shuru ke 3-4 lafz se dhoondein
-        if (!foundTrack && cleaned.length > 0) {
-          const shortQuery = cleaned.split(' ').slice(0, 4).join(' ');
-          searchRes = await fetch(
-            `https://api.spotify.com/v1/search?q=${encodeURIComponent(shortQuery)}&type=track&limit=1`,
-            { headers: { Authorization: `Bearer ${spotifyToken}` } }
-          );
-          searchData = await searchRes.json();
-          foundTrack = searchData.tracks?.items?.[0];
+        if (cleaned) queriesToTry.push(cleaned);
+        // Pehle 3 ya 4 alfaaz try karein
+        if (cleaned && cleaned.split(' ').length > 3) {
+          queriesToTry.push(cleaned.split(' ').slice(0, 3).join(' '));
+        }
+        // Agar raw title mein dash (-) ho (e.g. Artist - Song)
+        if (rawTitle.includes('-')) {
+          const parts = rawTitle.split('-');
+          if (parts[1]) queriesToTry.push(cleanTrackTitle(parts[1]));
         }
 
-        if (foundTrack?.uri) {
-          spotifyTrackUris.push(foundTrack.uri);
+        let foundUri = null;
+        for (const query of queriesToTry) {
+          if (!query || query.length < 2) continue;
+          const searchRes = await fetch(
+            `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=1`,
+            { headers: { Authorization: `Bearer ${spotifyToken}` } }
+          );
+          const searchData = await searchRes.json();
+          const item = searchData.tracks?.items?.[0];
+          if (item?.uri) {
+            foundUri = item.uri;
+            break;
+          }
+        }
+
+        if (foundUri) {
+          spotifyTrackUris.push(foundUri);
         }
       }
 
@@ -116,11 +127,11 @@ export default async function handler(req, res) {
         throw new Error(`Spotify Playlist Error: ${newPlaylist.error?.message || 'Failed to create'}`);
       }
 
-      // 5. Add Tracks to the created Spotify playlist
+      // 5. Add Tracks using /items (100 batch limit)
       if (newPlaylist.id && spotifyTrackUris.length > 0) {
         for (let i = 0; i < spotifyTrackUris.length; i += 100) {
           const batch = spotifyTrackUris.slice(i, i + 100);
-          const addRes = await fetch(`https://api.spotify.com/v1/playlists/${newPlaylist.id}/tracks`, {
+          await fetch(`https://api.spotify.com/v1/playlists/${newPlaylist.id}/items`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${spotifyToken}`,
@@ -128,11 +139,6 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({ uris: batch }),
           });
-
-          if (!addRes.ok) {
-            const addErr = await addRes.json();
-            console.error('Track add error:', addErr);
-          }
         }
       }
 
