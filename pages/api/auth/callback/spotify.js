@@ -38,10 +38,14 @@ export default async function handler(req, res) {
     });
     const profile = await profileResponse.json();
 
+    // Agar pehle se koi sync_user_id cookie mojood ho to wahi use karein, warna profile.id
+    const existingUserId = req.cookies?.sync_user_id;
+    const finalUserId = existingUserId || profile.id || 'default_user';
+
     const { error: dbError } = await supabase
       .from('user_tokens')
       .upsert({
-        user_id: profile.id,
+        user_id: finalUserId,
         provider: 'spotify',
         access_token: tokenData.access_token,
         refresh_token: tokenData.refresh_token,
@@ -52,7 +56,13 @@ export default async function handler(req, res) {
       console.error('Supabase save error:', dbError);
     }
 
-    res.redirect('/?spotify_connected=true');
+    // Cookie set karein taake refresh ya dusra auth hone par connection yaad rahe
+    res.setHeader('Set-Cookie', [
+      `sync_user_id=${finalUserId}; Path=/; Max-Age=2592000; SameSite=Lax`,
+      `spotify_connected=true; Path=/; Max-Age=2592000; SameSite=Lax`
+    ]);
+
+    res.redirect('/');
   } catch (err) {
     res.status(500).send(err.message);
   }
