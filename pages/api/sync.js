@@ -5,10 +5,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ message: 'Method not allowed' });
   }
 
-  const userId = req.cookies?.sync_user_id;
-  if (!userId) {
-    return res.status(401).json({ error: 'User not authenticated' });
-  }
+  const userId = req.cookies?.sync_user_id || 'app_user';
 
   try {
     const { data: tokens, error } = await supabase
@@ -38,7 +35,6 @@ export default async function handler(req, res) {
       const ytData = await ytRes.json();
 
       if (ytData.items) {
-        // Private playlists ko filter kar ke nikal diya
         const visiblePlaylists = ytData.items.filter(
           (pl) => pl.status?.privacyStatus !== 'private'
         );
