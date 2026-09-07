@@ -1,9 +1,12 @@
 import { supabase } from '@/lib/supabaseClient';
 
 export default async function handler(req, res) {
-  const { code } = req.query;
-  // Cookie se ID lein, agar nahi to fixed 'app_user' use karein
-  const userId = req.cookies?.sync_user_id || 'app_user';
+  const { code, error } = req.query;
+  const userId = 'app_user';
+
+  if (error) {
+    return res.status(400).send(`Google Auth Error: ${error}`);
+  }
 
   if (!code) {
     return res.status(400).send('Authorization code missing');
@@ -28,11 +31,10 @@ export default async function handler(req, res) {
 
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
-      throw new Error(tokenData.error_description || 'Failed to exchange Google token');
+      return res.status(400).json({ error: 'Google token exchange failed', details: tokenData });
     }
 
-    // Fixed ID ke sath token save/update karein
-    await supabase.from('user_tokens').upsert(
+    const { error: dbError } = await supabase.from('user_tokens').upsert(
       {
         user_id: userId,
         provider: 'google',
@@ -42,6 +44,10 @@ export default async function handler(req, res) {
       },
       { onConflict: 'user_id,provider' }
     );
+
+    if (dbError) {
+      return res.status(500).send(`Database Insert Error: ${dbError.message}`);
+    }
 
     res.setHeader('Set-Cookie', [
       `google_connected=true; Path=/; Max-Age=86400`,
