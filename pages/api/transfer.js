@@ -28,20 +28,19 @@ export default async function handler(req, res) {
     const googleToken = tokens.find((t) => t.provider === 'google')?.access_token;
     const spotifyToken = tokens.find((t) => t.provider === 'spotify')?.access_token;
 
-    // Spotify user ki ID lena (playlist banane ke liye zaroori hai)
+    // Spotify user profile ID lena
     const spUserRes = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${spotifyToken}` },
     });
     const spUser = await spUserRes.json();
     if (!spUser.id) {
-      return res.status(400).json({ error: 'Failed to access Spotify profile.' });
+      return res.status(400).json({ error: `Spotify Profile Error: ${spUser.error?.message || 'Unauthorized'}` });
     }
 
     const transferResults = [];
 
-    // Har selected playlist ko baari baari process karna
     for (const playlistId of playlistIds) {
-      // 1. YouTube playlist details lena
+      // 1. YouTube playlist title
       const plDetailRes = await fetch(
         `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}`,
         { headers: { Authorization: `Bearer ${googleToken}` } }
@@ -49,7 +48,7 @@ export default async function handler(req, res) {
       const plDetailData = await plDetailRes.json();
       const playlistName = plDetailData.items?.[0]?.snippet?.title || 'Synced Playlist';
 
-      // 2. Playlist ke tamam items/songs fetch karna
+      // 2. YouTube tracks fetch karna
       let songTitles = [];
       let pageToken = '';
       do {
@@ -61,7 +60,6 @@ export default async function handler(req, res) {
         if (itemsData.items) {
           itemsData.items.forEach((item) => {
             const title = item.snippet?.title;
-            // Deleted ya private videos ko skip karein
             if (title && title !== 'Private video' && title !== 'Deleted video') {
               songTitles.push(title);
             }
@@ -70,10 +68,9 @@ export default async function handler(req, res) {
         pageToken = itemsData.nextPageToken || '';
       } while (pageToken);
 
-      // 3. Spotify par matching track IDs dhoondna
+      // 3. Spotify search
       const spotifyTrackUris = [];
       for (const rawTitle of songTitles) {
-        // Clean title: brackets, official video, ft. etc hata kar search improve karna
         const cleaned = rawTitle
           .replace(/\[.*?\]|\(.*?\)/g, '')
           .replace(/official\s+video|official\s+audio|lyrics|hd|4k/gi, '')
@@ -90,7 +87,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 4. Spotify par new playlist create karna
+      // 4. Spotify new playlist create karna
       const createPlRes = await fetch(`https://api.spotify.com/v1/users/${spUser.id}/playlists`, {
         method: 'POST',
         headers: {
@@ -99,13 +96,17 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           name: playlistName,
-          description: 'Synced from YouTube',
+          description: 'Synced from YouTube via Web App',
           public: false,
         }),
       });
       const newPlaylist = await createPlRes.json();
 
-      // 5. Spotify playlist mein dhoonde gaye tracks add karna (100-100 ke batch mein)
+      if (createPlRes.status !== 201 && createPlRes.status !== 200) {
+        throw new Error(`Failed to create playlist on Spotify: ${newPlaylist.error?.message || 'Unknown error'}`);
+      }
+
+      // 5. Tracks add karna
       if (newPlaylist.id && spotifyTrackUris.length > 0) {
         for (let i = 0; i < spotifyTrackUris.length; i += 100) {
           const batch = spotifyTrackUris.slice(i, i + 100);
@@ -124,7 +125,7 @@ export default async function handler(req, res) {
         playlistName,
         totalSongs: songTitles.length,
         syncedToSpotify: spotifyTrackUris.length,
-        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify,
+        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify || null,
       });
     }
 
