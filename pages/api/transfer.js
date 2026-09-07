@@ -10,10 +10,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No playlists selected for transfer.' });
   }
 
-  const userId = req.cookies?.sync_user_id;
-  if (!userId) {
-    return res.status(401).json({ error: 'User not authenticated' });
-  }
+  const userId = req.cookies?.sync_user_id || 'default_user';
 
   try {
     const { data: tokens, error } = await supabase
@@ -28,19 +25,10 @@ export default async function handler(req, res) {
     const googleToken = tokens.find((t) => t.provider === 'google')?.access_token;
     const spotifyToken = tokens.find((t) => t.provider === 'spotify')?.access_token;
 
-    // Spotify user profile ID lena
-    const spUserRes = await fetch('https://api.spotify.com/v1/me', {
-      headers: { Authorization: `Bearer ${spotifyToken}` },
-    });
-    const spUser = await spUserRes.json();
-    if (!spUser.id) {
-      return res.status(400).json({ error: `Spotify Profile Error: ${spUser.error?.message || 'Unauthorized'}` });
-    }
-
     const transferResults = [];
 
     for (const playlistId of playlistIds) {
-      // 1. YouTube playlist title
+      // 1. YouTube Playlist Details
       const plDetailRes = await fetch(
         `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}`,
         { headers: { Authorization: `Bearer ${googleToken}` } }
@@ -48,7 +36,7 @@ export default async function handler(req, res) {
       const plDetailData = await plDetailRes.json();
       const playlistName = plDetailData.items?.[0]?.snippet?.title || 'Synced Playlist';
 
-      // 2. YouTube tracks fetch karna
+      // 2. Fetch tracks
       let songTitles = [];
       let pageToken = '';
       do {
@@ -68,7 +56,7 @@ export default async function handler(req, res) {
         pageToken = itemsData.nextPageToken || '';
       } while (pageToken);
 
-      // 3. Spotify search
+      // 3. Match Tracks on Spotify
       const spotifyTrackUris = [];
       for (const rawTitle of songTitles) {
         const cleaned = rawTitle
@@ -87,8 +75,8 @@ export default async function handler(req, res) {
         }
       }
 
-      // 4. Spotify new playlist create karna
-      const createPlRes = await fetch(`https://api.spotify.com/v1/users/${spUser.id}/playlists`, {
+      // 4. Create Playlist using direct /v1/me/playlists endpoint
+      const createPlRes = await fetch('https://api.spotify.com/v1/me/playlists', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${spotifyToken}`,
@@ -96,17 +84,17 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           name: playlistName,
-          description: 'Synced from YouTube via Web App',
+          description: 'Synced from YouTube',
           public: false,
         }),
       });
       const newPlaylist = await createPlRes.json();
 
-      if (createPlRes.status !== 201 && createPlRes.status !== 200) {
-        throw new Error(`Failed to create playlist on Spotify: ${newPlaylist.error?.message || 'Unknown error'}`);
+      if (!createPlRes.ok) {
+        throw new Error(`Spotify error: ${newPlaylist.error?.message || 'Forbidden'}`);
       }
 
-      // 5. Tracks add karna
+      // 5. Add Tracks
       if (newPlaylist.id && spotifyTrackUris.length > 0) {
         for (let i = 0; i < spotifyTrackUris.length; i += 100) {
           const batch = spotifyTrackUris.slice(i, i + 100);
@@ -125,7 +113,7 @@ export default async function handler(req, res) {
         playlistName,
         totalSongs: songTitles.length,
         syncedToSpotify: spotifyTrackUris.length,
-        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify || null,
+        spotifyPlaylistUrl: newPlaylist.external_urls?.spotify,
       });
     }
 
