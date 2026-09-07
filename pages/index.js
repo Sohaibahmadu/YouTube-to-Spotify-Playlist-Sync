@@ -1,12 +1,34 @@
+import { useState } from 'react';
 import { useRouter } from 'next/router';
 
 export default function Home({ isSpotifyConnected, isGoogleConnected }) {
   const router = useRouter();
   const { spotify_connected, google_connected } = router.query;
 
-  // Agar URL mein ho ya cookie mein ho, dono sooraton mein connected dikhaye
+  const [loading, setLoading] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
+
   const spotifyActive = Boolean(spotify_connected || isSpotifyConnected);
   const googleActive = Boolean(google_connected || isGoogleConnected);
+  const bothConnected = spotifyActive && googleActive;
+
+  const handleSync = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Sync failed');
+      }
+      setSyncResult(data);
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <main style={{ maxWidth: '600px', margin: '40px auto', padding: '20px', fontFamily: 'system-ui, sans-serif', textAlign: 'center' }}>
@@ -43,12 +65,46 @@ export default function Home({ isSpotifyConnected, isGoogleConnected }) {
         </a>
       </div>
 
-      {(spotifyActive || googleActive) && (
-        <p style={{ marginTop: '25px', color: '#16a34a', fontWeight: 'bold' }}>
-          {spotifyActive && googleActive 
-            ? 'Both accounts connected successfully!' 
-            : 'Authentication successful!'}
+      {bothConnected && (
+        <div style={{ marginTop: '30px' }}>
+          <button
+            onClick={handleSync}
+            disabled={loading}
+            style={{
+              padding: '14px 28px',
+              backgroundColor: '#2563eb',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontWeight: 'bold',
+              fontSize: '16px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.7 : 1
+            }}
+          >
+            {loading ? 'Fetching Playlists...' : 'Sync Playlists'}
+          </button>
+        </div>
+      )}
+
+      {errorMsg && (
+        <p style={{ marginTop: '20px', color: '#dc2626', fontWeight: 'bold' }}>
+          {errorMsg}
         </p>
+      )}
+
+      {syncResult && (
+        <div style={{ marginTop: '30px', textAlign: 'left', borderTop: '1px solid #ddd', paddingTop: '20px' }}>
+          <h3 style={{ color: '#16a34a' }}>{syncResult.message}</h3>
+          <p>Playlists Found: {syncResult.youtubePlaylistsCount}</p>
+          <ul style={{ listStyleType: 'disc', paddingLeft: '20px' }}>
+            {syncResult.playlists.map((pl) => (
+              <li key={pl.id} style={{ margin: '8px 0' }}>
+                <strong>{pl.snippet?.title}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </main>
   );
