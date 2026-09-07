@@ -30,16 +30,19 @@ export default async function handler(req, res) {
     let allPlaylists = [];
     let nextPageToken = '';
 
-    // Loop taake 25 ya 50 se zyada hon to tamam pages load hon
     do {
-      const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails,status&mine=true&maxResults=50${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
       const ytRes = await fetch(url, {
         headers: { Authorization: `Bearer ${googleToken}` },
       });
       const ytData = await ytRes.json();
 
       if (ytData.items) {
-        allPlaylists = allPlaylists.concat(ytData.items);
+        // Private playlists ko filter kar ke nikal diya
+        const visiblePlaylists = ytData.items.filter(
+          (pl) => pl.status?.privacyStatus !== 'private'
+        );
+        allPlaylists = allPlaylists.concat(visiblePlaylists);
       }
       nextPageToken = ytData.nextPageToken || '';
     } while (nextPageToken);
