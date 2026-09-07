@@ -1,8 +1,12 @@
 import { supabase } from '@/lib/supabaseClient';
 
 export default async function handler(req, res) {
-  const { code } = req.query;
-  const userId = req.cookies?.sync_user_id || 'app_user';
+  const { code, error } = req.query;
+  const userId = 'app_user';
+
+  if (error) {
+    return res.status(400).send(`Spotify Auth Error: ${error}`);
+  }
 
   if (!code) {
     return res.status(400).send('Authorization code missing');
@@ -17,7 +21,7 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: 'Basic ' + Buffer.from(client_id + ':' + client_secret).toString('base64'),
+        Authorization: 'Basic ' + Buffer.from(`${client_id}:${client_secret}`).toString('base64'),
       },
       body: new URLSearchParams({
         grant_type: 'authorization_code',
@@ -28,11 +32,10 @@ export default async function handler(req, res) {
 
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
-      throw new Error(tokenData.error_description || 'Failed to exchange Spotify token');
+      return res.status(400).json({ error: 'Token exchange failed', details: tokenData });
     }
 
-    // Google wale same ID ('app_user') ke sath Spotify token link karein
-    await supabase.from('user_tokens').upsert(
+    const { error: dbError } = await supabase.from('user_tokens').upsert(
       {
         user_id: userId,
         provider: 'spotify',
@@ -42,6 +45,10 @@ export default async function handler(req, res) {
       },
       { onConflict: 'user_id,provider' }
     );
+
+    if (dbError) {
+      return res.status(500).send(`Database Insert Error: ${dbError.message}`);
+    }
 
     res.setHeader('Set-Cookie', [
       `spotify_connected=true; Path=/; Max-Age=86400`,
