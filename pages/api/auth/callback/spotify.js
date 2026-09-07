@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabaseClient';
 
 export default async function handler(req, res) {
   const { code } = req.query;
-  const userId = req.cookies?.sync_user_id || 'default_user';
+  const userId = req.cookies?.sync_user_id || 'app_user';
 
   if (!code) {
     return res.status(400).send('Authorization code missing');
@@ -31,13 +31,13 @@ export default async function handler(req, res) {
       throw new Error(tokenData.error_description || 'Failed to exchange Spotify token');
     }
 
-    // Upsert (purana token naye permissions ke sath replace karega)
+    // Google wale same ID ('app_user') ke sath Spotify token link karein
     await supabase.from('user_tokens').upsert(
       {
         user_id: userId,
         provider: 'spotify',
         access_token: tokenData.access_token,
-        refresh_token: tokenData.refresh_token,
+        refresh_token: tokenData.refresh_token || null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,provider' }
