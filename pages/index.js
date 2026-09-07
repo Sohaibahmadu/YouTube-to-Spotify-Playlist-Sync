@@ -1,8 +1,12 @@
 import { useRouter } from 'next/router';
 
-export default function Home() {
+export default function Home({ isSpotifyConnected, isGoogleConnected }) {
   const router = useRouter();
   const { spotify_connected, google_connected } = router.query;
+
+  // Agar URL mein ho ya cookie mein ho, dono sooraton mein connected dikhaye
+  const spotifyActive = Boolean(spotify_connected || isSpotifyConnected);
+  const googleActive = Boolean(google_connected || isGoogleConnected);
 
   return (
     <main style={{ maxWidth: '600px', margin: '40px auto', padding: '20px', fontFamily: 'system-ui, sans-serif', textAlign: 'center' }}>
@@ -14,36 +18,51 @@ export default function Home() {
           href="/api/auth/spotify" 
           style={{
             padding: '12px 20px',
-            backgroundColor: '#1DB954',
+            backgroundColor: spotifyActive ? '#16a34a' : '#1DB954',
             color: '#fff',
             textDecoration: 'none',
             borderRadius: '6px',
             fontWeight: 'bold'
           }}
         >
-          {spotify_connected ? '✓ Spotify Connected' : 'Connect Spotify'}
+          {spotifyActive ? '✓ Spotify Connected' : 'Connect Spotify'}
         </a>
 
         <a 
           href="/api/auth/google" 
           style={{
             padding: '12px 20px',
-            backgroundColor: '#EA4335',
+            backgroundColor: googleActive ? '#16a34a' : '#EA4335',
             color: '#fff',
             textDecoration: 'none',
             borderRadius: '6px',
             fontWeight: 'bold'
           }}
         >
-          {google_connected ? '✓ YouTube (Google) Connected' : 'Connect YouTube'}
+          {googleActive ? '✓ YouTube (Google) Connected' : 'Connect YouTube'}
         </a>
       </div>
 
-      {(spotify_connected || google_connected) && (
+      {(spotifyActive || googleActive) && (
         <p style={{ marginTop: '25px', color: '#16a34a', fontWeight: 'bold' }}>
-          Authentication successful!
+          {spotifyActive && googleActive 
+            ? 'Both accounts connected successfully!' 
+            : 'Authentication successful!'}
         </p>
       )}
     </main>
   );
+}
+
+export async function getServerSideProps({ req }) {
+  const cookies = req.headers.cookie || '';
+  const isSpotifyConnected = cookies.includes('spotify_connected=true');
+  const isGoogleConnected = cookies.includes('google_connected=true');
+
+  return {
+    props: {
+      isSpotifyConnected,
+      isGoogleConnected,
+    },
+  };
 }
